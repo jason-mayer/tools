@@ -27,7 +27,7 @@ class Pool {
   /// allocated.
   ///
   /// See [PoolResource.allowRelease].
-  final _onReleaseCallbacks = Queue<void Function()>();
+  final _onReleaseCallbacks = Queue<FutureOr<void> Function()>();
 
   /// Completers that will be completed once `onRelease` callbacks are done
   /// running.
@@ -281,7 +281,7 @@ class Pool {
 
   /// If there are any pending requests, this will fire the oldest one after
   /// running [onRelease].
-  void _onResourceReleaseAllowed(void Function() onRelease) {
+  void _onResourceReleaseAllowed(FutureOr<void> Function() onRelease) {
     _resetTimer();
 
     if (_requestedResources.isNotEmpty) {
@@ -303,15 +303,14 @@ class Pool {
   ///
   /// Futures returned by [_runOnRelease] always complete in the order they were
   /// created, even if earlier [onRelease] callbacks take longer to run.
-  Future<PoolResource> _runOnRelease(void Function() onRelease) {
-    Future.sync(onRelease).then((value) {
-      _onReleaseCompleters.removeFirst().complete(PoolResource._(this));
-    }).catchError((Object error, StackTrace stackTrace) {
-      _onReleaseCompleters.removeFirst().completeError(error, stackTrace);
-    });
-
+  Future<PoolResource> _runOnRelease(FutureOr<void> Function() onRelease) {
     var completer = Completer<PoolResource>.sync();
     _onReleaseCompleters.add(completer);
+
+    Future.sync(onRelease).catchError((_) {}).then((_) {
+      _onReleaseCompleters.removeFirst().complete(PoolResource._(this));
+    });
+
     return completer.future;
   }
 
@@ -376,6 +375,8 @@ class PoolResource {
   /// This is useful when a resource's main function is complete, but it may
   /// produce additional information later on. For example, an isolate's task
   /// may be complete, but it could still emit asynchronous errors.
+  ///
+  /// Any errors thrown by [onRelease] or the future it returns are ignored.
   void allowRelease(FutureOr<void> Function() onRelease) {
     if (_released) {
       throw StateError('A PoolResource may only be released once.');
